@@ -1,0 +1,45 @@
+name: Tailscale on Windows 11 ARM with credentials output
+
+on:
+  workflow_dispatch:
+
+jobs:
+  connect-tailscale-windows11:
+    runs-on: windows-11-arm
+
+    env:
+      TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
+
+    steps:
+    - name: Install Chocolatey
+      shell: powershell
+      run: |
+        Set-ExecutionPolicy Bypass -Scope Process -Force
+        iex ((New-Object System.Net.WebClient).DownloadString('https://chocolatey.org/install.ps1'))
+
+    - name: Install Tailscale
+      shell: powershell
+      run: choco install tailscale --yes
+
+    - name: Add Chocolatey to PATH
+      shell: powershell
+      run: |
+        $env:PATH += ";$env:ProgramData\chocolatey\bin"
+        echo "Updated PATH: $env:PATH"
+
+    - name: Connect to Tailscale
+      shell: powershell
+      run: tailscale up --authkey $env:TAILSCALE_AUTH_KEY --hostname github-actions-node
+
+    - name: Show Tailscale IP and credentials
+      shell: powershell
+      run: |
+        $ip = tailscale ip -4
+        Write-Host "Tailscale IP: $ip"
+        Write-Host "User: ciuser@example.com"
+        Write-Host "Password: YourStrongPassw0rd123"
+    
+    - name: Keep workflow alive for 6 hours
+      shell: powershell
+      run: Start-Sleep -Seconds 21600
+      
