@@ -1,0 +1,88 @@
+name: Create Windows 10 VM on Paperspace with Tailscale
+
+on:
+  workflow_dispatch:
+
+jobs:
+  create-windows10-vm:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Create VM on Paperspace
+      id: create_vm
+      env:
+        PAPERSPACE_API_KEY: ${{ secrets.PAPERSPACE_API_KEY }}
+        TEMPLATE_ID: ${{ secrets.TEMPLATE_ID }}
+      run: |
+        NAME="windows10-vm"
+        MACHINE_TYPE="p6000"
+        REGION="NY2"
+        DISK_SIZE=1000  # 1TB SSD
+
+        EMAIL="ciuser@example.com"
+        PASSWORD="YourStrongPassw0rd123"
+
+        echo "Creating Windows 10 VM with TEMPLATE_ID=$TEMPLATE_ID..."
+        RESPONSE=$(curl -s -X POST "https://api.paperspace.com/v1/machines/createSingleMachinePublic" \
+          -H "Content-Type: application/json" \
+          -H "x-api-key: $PAPERSPACE_API_KEY" \
+          -d '{
+            "name": "'$NAME'",
+            "machineType": "'$MACHINE_TYPE'",
+            "templateId": "'$TEMPLATE_ID'",
+            "region": "'$REGION'",
+            "diskSize": '$DISK_SIZE',
+            "email": "'$EMAIL'",
+            "password": "'$PASSWORD'"
+          }')
+
+        echo "$RESPONSE"
+
+        MACHINE_ID=$(echo "$RESPONSE" | jq -r '.id')
+        if [[ -z "$MACHINE_ID" || "$MACHINE_ID" == "null" ]]; then
+          echo "Failed to create VM"
+          exit 1
+        fi
+
+        echo "::set-output name=machine_id::$MACHINE_ID"
+
+    - name: Poll VM state until ready (max 15 min)
+      env:
+        PAPERSPACE_API_KEY: ${{ secrets.PAPERSPACE_API_KEY }}
+      run: |
+        MACHINE_ID=${{ steps.create_vm.outputs.machine_id }}
+        for i in {1..180}; do
+          STATE=$(curl -s -H "x-api-key: $PAPERSPACE_API_KEY" "https://api.paperspace.com/v1/machines/$MACHINE_ID" | jq -r '.state')
+          echo "VM state: $STATE"
+          if [[ "$STATE" == "ready" ]]; then
+            echo "VM is ready"
+            break
+          fi
+          sleep 5
+        done
+
+    - name: Connect to Tailscale VPN
+      uses: tailscale/github-action@v3
+      with:
+        authkey: ${{ secrets.TAILSCALE_AUTH_KEY }}
+        hostname: windows10-vm
+
+    - id: output_creds
+      run: |
+        echo "::set-output name=user::ciuser@example.com"
+        echo "::set-output name=password::YourStrongPassw0rd123"
+
+    - name: Get Tailscale IP
+      id: get_ip
+      run: |
+        IP=$(tailscale ip -4)
+        echo "::set-output name=ip::$IP"
+
+    - name: Show connection info
+      run: |
+        echo "Tailscale IP: ${{ steps.get_ip.outputs.ip }}"
+        echo "User: ${{ steps.output_creds.outputs.user }}"
+        echo "Password: ${{ steps.output_creds.outputs.password }}"
+
+    - name: Keep workflow alive for 6 hours
+      run: sleep 21600
+      
