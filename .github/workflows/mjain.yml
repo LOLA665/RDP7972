@@ -1,0 +1,75 @@
+name: Create Ubuntu 20.04 VM with Tailscale on Paperspace
+
+on:
+  workflow_dispatch:
+
+jobs:
+  create-linux-vm:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Create Ubuntu VM on Paperspace
+      id: create_vm
+      env:
+        PAPERSPACE_API_KEY: ${{ secrets.PAPERSPACE_API_KEY }}
+        TEMPLATE_ID: tx64v8w1
+      run: |
+        NAME="ubuntu-vm"
+        MACHINE_TYPE="p6000"
+        REGION="NY2"
+        DISK_SIZE=1000  # 1 TB SSD
+
+        echo "Creating Ubuntu 20.04 VM with P6000, 128GB RAM, 1TB SSD..."
+        RESPONSE=$(curl -s -X POST "https://api.paperspace.com/v1/machines/createSingleMachinePublic" \
+          -H "Content-Type: application/json" \
+          -H "x-api-key: $PAPERSPACE_API_KEY" \
+          -d '{
+            "name": "'$NAME'",
+            "machineType": "'$MACHINE_TYPE'",
+            "templateId": "'$TEMPLATE_ID'",
+            "region": "'$REGION'",
+            "diskSize": '$DISK_SIZE'
+          }')
+
+        echo "$RESPONSE"
+        MACHINE_ID=$(echo "$RESPONSE" | jq -r '.id')
+        if [[ -z "$MACHINE_ID" || "$MACHINE_ID" == "null" ]]; then
+          echo "Failed to create VM"
+          exit 1
+        fi
+        echo "::set-output name=machine_id::$MACHINE_ID"
+
+    - name: Poll VM state until ready (max 15 min)
+      env:
+        PAPERSPACE_API_KEY: ${{ secrets.PAPERSPACE_API_KEY }}
+      run: |
+        MACHINE_ID=${{ steps.create_vm.outputs.machine_id }}
+        for i in {1..180}; do
+          STATE=$(curl -s -H "x-api-key: $PAPERSPACE_API_KEY" "https://api.paperspace.com/v1/machines/$MACHINE_ID" | jq -r '.state')
+          echo "VM state: $STATE"
+          if [[ "$STATE" == "ready" ]]; then
+            echo "VM is ready"
+            break
+          fi
+          sleep 5
+        done
+
+    - name: Connect to Tailscale VPN
+      uses: tailscale/github-action@v3
+      with:
+        authkey: ${{ secrets.TAILSCALE_AUTH_KEY }}
+        hostname: ubuntu-vm
+
+    - name: Get Tailscale IP
+      id: get_ip
+      run: |
+        IP=$(tailscale ip -4)
+        echo "::set-output name=ip::$IP"
+
+    - name: Show connection info
+      run: |
+        echo "Tailscale IP: ${{ steps.get_ip.outputs.ip }}"
+
+    - name: Keep workflow alive 6 hours
+      run: sleep 21600
+      
